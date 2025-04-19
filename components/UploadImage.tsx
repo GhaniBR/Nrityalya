@@ -3,28 +3,40 @@ import { useEffect, useRef, useState } from "react";
 function GestureRecognition() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [prediction, setPrediction] = useState("");
   const [isCameraOn, setIsCameraOn] = useState(false);
-  const [mode, setMode] = useState<"hand" | "body">("hand");
+
+  // Hand mudra detection states
+  const [mudra, setMudra] = useState("");
+  const [mudraConfidence, setMudraConfidence] = useState(0);
+  const [availableMudras, setAvailableMudras] = useState<string[]>([]);
+
+  // Body pose detection states
+  const [bodyPose, setBodyPose] = useState("");
+
+  // Mode selection
+  const [detectionMode, setDetectionMode] = useState<"hands" | "body">("hands");
 
   useEffect(() => {
+    // Fetch available mudras when component mounts
+    fetch("http://localhost:8000/mudras")
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.mudras) {
+          setAvailableMudras(data.mudras);
+        }
+      })
+      .catch((error) => console.error("Error fetching mudras:", error));
+
     return () => closeCamera(); // Cleanup on unmount
   }, []);
 
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-
-      // Wait for next tick to ensure videoRef is in DOM
-      setTimeout(() => {
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          console.log("Camera started and video element found.");
-        } else {
-          console.warn("videoRef is null when setting srcObject.");
-        }
-      }, 100); // slight delay ensures DOM update completes
-
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        console.log("Camera started.");
+      }
       setIsCameraOn(true);
     } catch (error) {
       console.error("Error accessing webcam:", error);
@@ -38,168 +50,229 @@ function GestureRecognition() {
       videoRef.current.srcObject = null;
     }
     setIsCameraOn(false);
+    setMudra("");
+    setBodyPose("");
+    setMudraConfidence(0);
   };
 
-  const captureAndSendFrame = async () => {
-    if (!videoRef.current || !canvasRef.current) return;
+  const captureFrame = () => {
+    if (!videoRef.current || !canvasRef.current) return null;
 
     const canvas = canvasRef.current;
     const context = canvas.getContext("2d");
-    if (!context) return;
+    if (!context) return null;
 
+    // Draw the current video frame to the canvas
     context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
 
-    canvas.toBlob(async (blob) => {
-      if (blob) {
-        const formData = new FormData();
-        formData.append("file", blob, "frame.jpg");
+    // Convert the canvas content to base64
+    return canvas.toDataURL("image/jpeg");
+  };
 
-        const endpoint =
-          mode === "hand"
-            ? "http://localhost:8000/predict/hand/"
-            : "http://localhost:8000/predict/body/";
+  const detectHandMudra = async (base64Image: string) => {
+    if (detectionMode !== "hands") return;
 
-        try {
-          const response = await fetch(endpoint, {
-            method: "POST",
-            body: formData,
-          });
+    try {
+      const response = await fetch("http://localhost:8000/predict", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          image: base64Image,
+        }),
+      });
 
-          const data = await response.json();
-          if (data.hand_gesture) setPrediction(data.hand_gesture);
-          if (data.body_pose) setPrediction(data.body_pose);
-        } catch (error) {
-          console.error("Error fetching prediction:", error);
-        }
+      const data = await response.json();
+      if (data.mudra) {
+        setMudra(data.mudra);
+        setMudraConfidence(data.confidence);
       }
-    }, "image/jpeg");
+    } catch (error) {
+      console.error("Error detecting hand mudra:", error);
+    }
+  };
+
+  const detectBodyPose = async (base64Image: string) => {
+    if (detectionMode !== "body") return;
+
+    try {
+      const response = await fetch("http://localhost:5000/predict", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          image: base64Image,
+        }),
+      });
+
+      const data = await response.json();
+      if (data.prediction) {
+        setBodyPose(data.prediction);
+      }
+    } catch (error) {
+      console.error("Error detecting body pose:", error);
+    }
+  };
+
+  const captureAndProcessFrame = async () => {
+    const base64Image = captureFrame();
+    if (!base64Image) return;
+
+    if (detectionMode === "hands") {
+      await detectHandMudra(base64Image);
+    }
+
+    if (detectionMode === "body") {
+      await detectBodyPose(base64Image);
+    }
   };
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (isCameraOn) {
-      interval = setInterval(captureAndSendFrame, 1000);
+      interval = setInterval(captureAndProcessFrame, 1000);
     }
     return () => clearInterval(interval);
-  }, [isCameraOn, mode]);
+  }, [isCameraOn, detectionMode]);
 
-  const baseButtonClass =
-    "px-4 py-2 font-semibold rounded-lg transition-all duration-300";
-  const activeButtonClass = "bg-[#f54a00] text-white";
-  const inactiveButtonClass = "bg-gray-300 text-gray-800";
-
-  const bodyButtonClass =
-    mode === "body"
-      ? `${baseButtonClass} ${activeButtonClass}`
-      : `${baseButtonClass} ${inactiveButtonClass}`;
-
-  const handButtonClass =
-    mode === "hand"
-      ? `${baseButtonClass} ${activeButtonClass}`
-      : `${baseButtonClass} ${inactiveButtonClass}`;
-
-  // ========== UI Render Start ==========
-
-  // For BODY mode full screen layout
-  if (mode === "body" && isCameraOn) {
-    return (
-      <div className="w-screen h-screen bg-gray-100 flex flex-col items-center justify-start p-4">
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          className="w-[80vw] h-[73vh] rounded-lg shadow-md"
-        />
-        <canvas ref={canvasRef} width="640" height="480" className="hidden" />
-
-        <h3 className="text-lg font-semibold text-gray-700 mt-4">
-          Prediction:{" "}
-          <span className="text-[#f54a00]">{prediction || "N/A"}</span>
-        </h3>
-
-        <div className="flex gap-4 mt-4">
-          <button onClick={() => setMode("hand")} className={handButtonClass}>
-            Hand Gesture
-          </button>
-          <button onClick={() => setMode("body")} className={bodyButtonClass}>
-            Body Pose
-          </button>
-        </div>
-
-        <button
-          onClick={closeCamera}
-          className="mt-4 px-6 py-2 text-white font-semibold rounded-lg transition-all duration-300 bg-[#f54a00] hover:bg-[#c03b00] focus:outline-none focus:ring-2 focus:ring-[#f54a00]"
-        >
-          Close Camera
-        </button>
-      </div>
-    );
-  }
-
-  // For HAND mode or BODY mode with camera OFF
   return (
-    <div
-      className={`flex flex-col items-center justify-center bg-gray-100 p-6 ${
-        mode === "body" && isCameraOn ? "min-h-screen" : "min-h-[74.2vh]"
-      }`}
-    >
-      <div
-        className={`bg-white rounded-lg shadow-lg flex flex-col items-center transition-all duration-500 ${
-          mode === "body" && isCameraOn
-            ? "w-screen h-screen p-2"
-            : "w-full max-w-lg p-6"
-        }`}
-      >
-        {/* Always mounted so ref is available */}
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          className={`rounded-lg transition-all duration-500 ease-in-out ${
-            isCameraOn ? "block" : "hidden"
-          } ${mode === "body" ? "w-[95vw] h-[80vh]" : "w-full h-[320px]"}`}
-        />
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 p-6">
+      <div className="bg-white rounded-lg shadow-lg w-full max-w-6xl p-6 flex flex-col items-center">
+        <h2 className="text-2xl font-bold mb-4 text-[#f54a00]">
+          Advanced Gesture Recognition
+        </h2>
 
-        <canvas ref={canvasRef} width="640" height="480" className="hidden" />
-
-        {/* Prediction only in body mode */}
-        {mode === "body" && isCameraOn && (
-          <h3 className="text-lg font-semibold text-gray-700 mt-4">
-            Prediction:{" "}
-            <span className="text-[#f54a00]">{prediction || "N/A"}</span>
-          </h3>
-        )}
-
-        {/* Content shown only in hand mode or when camera is OFF in body mode */}
-        {(mode === "hand" || !isCameraOn) && (
-          <>
-            <h2 className="text-2xl font-bold text-gray-900 mt-4 text-center">
-              Real-Time Gesture & Body Pose Recognition
-            </h2>
-            <h3 className="text-lg font-semibold text-gray-700 mt-2">
-              Prediction:{" "}
-              <span className="text-[#f54a00]">{prediction || "N/A"}</span>
-            </h3>
-          </>
-        )}
-
-        <div className="flex flex-col items-center mt-4 gap-4">
-          <div className="flex gap-4">
-            <button onClick={() => setMode("hand")} className={handButtonClass}>
-              Hand Gesture
+        {/* Detection Mode Selection */}
+        <div className="flex justify-center mb-4">
+          <div className="flex space-x-4">
+            <button
+              onClick={() => setDetectionMode("hands")}
+              className={`px-4 py-2 rounded-lg ${
+                detectionMode === "hands"
+                  ? "bg-[#f54a00] text-white"
+                  : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+              }`}
+            >
+              Hand Mudras
             </button>
-            <button onClick={() => setMode("body")} className={bodyButtonClass}>
-              Body Pose
+            <button
+              onClick={() => setDetectionMode("body")}
+              className={`px-4 py-2 rounded-lg ${
+                detectionMode === "body"
+                  ? "bg-[#f54a00] text-white"
+                  : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+              }`}
+            >
+              Body Poses
             </button>
+            {/* <button
+              onClick={() => setDetectionMode("both")}
+              className={`px-4 py-2 rounded-lg ${
+                detectionMode === "both" 
+                  ? "bg-[#f54a00] text-white" 
+                  : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+              }`}
+            >
+              Both
+            </button> */}
           </div>
-
-          <button
-            onClick={isCameraOn ? closeCamera : startCamera}
-            className="px-6 py-2 text-white font-semibold rounded-lg transition-all duration-300 bg-[#f54a00] hover:bg-[#c03b00] focus:outline-none focus:ring-2 focus:ring-[#f54a00]"
-          >
-            {isCameraOn ? "Close Camera" : "Open Camera"}
-          </button>
         </div>
+
+        {/* Camera View */}
+        <div className="w-full">
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            className={`rounded-lg w-full h-[420px] ${
+              isCameraOn ? "block" : "hidden"
+            } bg-gray-200 object-cover`}
+          />
+
+          <canvas ref={canvasRef} width="640" height="480" className="hidden" />
+        </div>
+
+        {/* Results Display */}
+        {isCameraOn && (
+          <div className="mt-6 w-full flex flex-col md:flex-row justify-around">
+            {detectionMode === "hands" && (
+              <div className="bg-gray-50 p-4 rounded-lg mb-4 md:mb-0 md:w-5/12">
+                <h3 className="text-lg font-semibold text-gray-800 mb-2">
+                  Hand Mudra Detection
+                </h3>
+                <div className="p-3 bg-white rounded shadow-sm">
+                  <p className="text-lg">
+                    Detected:{" "}
+                    <span className="font-medium text-[#f54a00]">
+                      {mudra || "No mudra detected"}
+                    </span>
+                  </p>
+                  {mudraConfidence > 0 && (
+                    <p className="text-sm text-gray-600 mt-1">
+                      Confidence: {(mudraConfidence * 100).toFixed(2)}%
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {detectionMode === "body" && (
+              <div className="bg-gray-50 p-4 rounded-lg md:w-5/12">
+                <h3 className="text-lg font-semibold text-gray-800 mb-2">
+                  Body Pose Detection
+                </h3>
+                <div className="p-3 bg-white rounded shadow-sm">
+                  <p className="text-lg">
+                    Detected:{" "}
+                    <span className="font-medium text-[#f54a00]">
+                      {bodyPose || "No pose detected"}
+                    </span>
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Camera Controls */}
+        <div className="mt-6 flex gap-4">
+          {!isCameraOn ? (
+            <button
+              onClick={startCamera}
+              className="px-6 py-2 bg-[#f54a00] text-white font-semibold rounded-lg hover:bg-[#c03b00] transition-all"
+            >
+              Start Camera
+            </button>
+          ) : (
+            <button
+              onClick={closeCamera}
+              className="px-6 py-2 bg-[#f54a00] text-white font-semibold rounded-lg hover:bg-[#c03b00] transition-all"
+            >
+              Stop Camera
+            </button>
+          )}
+        </div>
+
+        {/* Available Mudras Display */}
+        {availableMudras.length > 0 && detectionMode !== "body" && (
+          <div className="mt-6 w-full">
+            <h3 className="text-md font-medium text-gray-700 mb-2">
+              Available Mudras:
+            </h3>
+            <div className="flex flex-wrap gap-2">
+              {availableMudras.map((mudra, index) => (
+                <span
+                  key={index}
+                  className="px-3 py-1 bg-gray-200 text-gray-800 rounded-full text-sm"
+                >
+                  {mudra}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
