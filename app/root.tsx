@@ -8,6 +8,7 @@ import {
   ScrollRestoration,
   useNavigate,
 } from "react-router-dom";
+import VoiceControlComponent from "components/VoiceControl";
 
 import type { Route } from "./+types/root";
 import "./app.css";
@@ -25,6 +26,7 @@ export const links: Route.LinksFunction = () => [
     href: "https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap",
   },
 ];
+<link rel="icon" href="/favicon.ico" type="image/x-icon" />;
 
 // Rest of your code remains the same...
 
@@ -44,10 +46,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <Meta />
         <Links />
+        <link rel="icon" href="/favicon.ico" type="image/x-icon" />
       </head>
+
       <body>
         {children}
-
+        <VoiceControl />
         <ScrollRestoration />
         <Scripts />
       </body>
@@ -99,7 +103,7 @@ export function App() {
                 onClick={() => navigate("/gesture")}
                 className="hover:bg-white text-orange-600 px-4 py-2 rounded-lg bg-orange-100 transition-colors font-medium cursor-pointer"
               >
-                Try our AI feature
+                Try our new AI Camera
               </button>
             </div>
           </div>
@@ -177,3 +181,7 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
 }
 
 export default AppRoot;
+
+function VoiceControl() {
+  return <VoiceControlComponent />;
+}

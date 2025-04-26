@@ -27,7 +27,24 @@ function GestureRecognition() {
       })
       .catch((error) => console.error("Error fetching mudras:", error));
 
-    return () => closeCamera(); // Cleanup on unmount
+    // Add voice command event listeners
+    const handleStartCamera = () => startCamera();
+    const handleStopCamera = () => closeCamera();
+    const handleSwitchMode = (event: CustomEvent) => {
+      setDetectionMode(event.detail);
+    };
+
+    window.addEventListener('startCamera', handleStartCamera);
+    window.addEventListener('stopCamera', handleStopCamera);
+    window.addEventListener('switchMode', handleSwitchMode as EventListener);
+
+    return () => {
+      closeCamera(); // Cleanup camera
+      // Remove event listeners
+      window.removeEventListener('startCamera', handleStartCamera);
+      window.removeEventListener('stopCamera', handleStopCamera);
+      window.removeEventListener('switchMode', handleSwitchMode as EventListener);
+    };
   }, []);
 
   const startCamera = async () => {
@@ -230,6 +247,11 @@ function GestureRecognition() {
                       {bodyPose || "No pose detected"}
                     </span>
                   </p>
+                  {mudraConfidence > 0 && (
+                    <p className="text-sm text-gray-600 mt-1">
+                      Confidence: {(mudraConfidence * 100).toFixed(2)}%
+                    </p>
+                  )}
                 </div>
               </div>
             )}
